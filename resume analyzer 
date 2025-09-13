@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AI Resume Analyzer — Multi-company Dashboard</title>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- pdf.js for PDF text extraction -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.min.js"></script>
+
+  <style>
+    :root{
+      --bg:#0f172a; --card:#0b1220; --accent:#06b6d4; --muted:#94a3b8; --glass: rgba(255,255,255,0.03);
+    }
+    html,body{height:100%; margin:0; font-family:Inter,Segoe UI,Arial; background:linear-gradient(180deg,#071029 0%, #071423 100%); color:#e6eef6}
+    .app{display:grid; grid-template-columns:320px 1fr; gap:20px; padding:18px; max-width:1200px; margin:18px auto;}
+    .panel{background:var(--card); border-radius:12px; padding:16px; box-shadow: 0 6px 18px rgba(2,6,23,0.6);}
+    h2{margin:0 0 12px 0; font-size:1.05rem}
+    label{display:block; font-size:0.9rem; color:var(--muted); margin-bottom:6px}
+    input[type=file]{color:transparent}
+    .companies{display:flex; flex-direction:column; gap:6px; max-height:220px; overflow:auto; padding-right:6px;}
+    .company {display:flex; align-items:center; gap:8px; padding:8px; border-radius:8px; cursor:pointer}
+    .company input{transform:scale(1.1)}
+    .btn{display:inline-block; padding:8px 12px; background:var(--accent); color:#041025; font-weight:600; border-radius:8px; cursor:pointer; border:none}
+    .btn.secondary{background:transparent; color:var(--muted); border:1px solid rgba(255,255,255,0.05)}
+    .textarea{width:100%; min-height:120px; resize:vertical; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); background:var(--glass); color:inherit}
+    .row{display:flex; gap:12px; align-items:center}
+    .score-big{font-size:2.5rem; font-weight:700; color:var(--accent)}
+    .chip{background:rgba(255,255,255,0.03); padding:6px 8px; border-radius:999px; color:var(--muted); font-size:0.85rem}
+    .split{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+    .list{max-height:260px; overflow:auto; padding-right:8px}
+    .highlight{background:rgba(6,182,212,0.12); color:var(--accent); padding:4px 6px; border-radius:6px}
+    footer{margin-top:12px; color:var(--muted); font-size:0.85rem}
+    @media (max-width:980px){ .app{grid-template-columns:1fr; padding:12px} .split{grid-template-columns:1fr} .panel{padding:12px} }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- LEFT PANEL: controls -->
+    <div class="panel">
+      <h2>Resume Analyzer (Client-side)</h2>
+      <p style="color:var(--muted); margin:6px 0 12px 0; font-size:0.92rem">
+        Upload PDF or paste your resume text, select one or more target companies, then click <strong>Analyze</strong>.
+      </p>
+
+      <label>Choose companies (compare results)</label>
+      <div class="companies panel" id="companiesList" style="background:transparent; padding:6px 0;">
+        <!-- companies injected by JS -->
+      </div>
+
+      <label style="margin-top:10px">Upload Resume (PDF or TXT)</label>
+      <input id="fileInput" type="file" accept=".pdf,.txt,.doc,.docx" />
+
+      <label style="margin-top:10px">Or paste resume text</label>
+      <textarea id="resumeText" class="textarea" placeholder="Paste resume text here (or upload PDF)"></textarea>
+
+      <div style="margin-top:12px" class="row">
+        <button class="btn" id="analyzeBtn">Analyze</button>
+        <button class="btn secondary" id="clearBtn">Reset</button>
+        <div style="flex:1"></div>
+      </div>
+
+      <footer>
+        Built-in JD templates: <span class="chip">Amazon</span> <span class="chip">Google</span> <span class="chip">Microsoft</span> <span class="chip">Wipro</span> <span class="chip">TCS</span>
+      </footer>
+    </div>
+
+    <!-- RIGHT PANEL: results -->
+    <div class="panel" id="resultsPanel">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2>Analysis Dashboard</h2>
+        <div id="summarySmall" style="text-align:right">
+          <div id="overallScore" class="score-big">—</div>
+          <div style="color:var(--muted); font-size:0.9rem">Avg match score</div>
+        </div>
+      </div>
+
+      <div class="split" style="margin-top:14px">
+        <div class="panel" style="background:#061220">
+          <h3 style="margin-top:0; font-size:0.95rem">Company comparison</h3>
+          <canvas id="companyChart" height="220"></canvas>
+          <div id="companyListSmall" style="margin-top:8px"></div>
+        </div>
+
+        <div class="panel" style="background:#061220">
+          <h3 style="margin-top:0; font-size:0.95rem">Skills & Gaps</h3>
+          <div id="skillsCloud" class="list" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+          <div style="margin-top:8px; color:var(--muted); font-size:0.9rem" id="missingSkillsBlock"></div>
+        </div>
+      </div>
+
+      <div style="margin-top:12px" class="panel">
+        <h3 style="margin-top:0; font-size:0.95rem">Suggestions & Highlights</h3>
+        <div id="suggestions" style="line-height:1.45; color:#dbeafe"></div>
+      </div>
+
+      <div style="margin-top:12px" class="panel">
+        <h3 style="margin-top:0; font-size:0.95rem">Parsed resume text (preview)</h3>
+        <div id="parsedPreview" style="max-height:260px; overflow:auto; white-space:pre-wrap; background:transparent; color:var(--muted); padding:8px"></div>
+      </div>
+
+      <div style="margin-top:12px; display:flex; gap:8px;">
+        <button class="btn" id="downloadBtn">Download Suggestions</button>
+        <button class="btn secondary" id="copyBtn">Copy Suggestions</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ---------------------------
+  Company job descriptions (templates)
+  Add or edit companies and keywords here.
+----------------------------*/
+const COMPANY_JDS = {
+  "Amazon": {
+    title: "Amazon - Software Development Engineer",
+    required: ["data structures", "algorithms", "system design", "distributed systems", "scalability", "java", "python", "aws"],
+    nice: ["microservices", "performance", "k8s", "docker", "lambda"],
+    description: "Build scalable distributed systems, use algorithms and data structures, experience with AWS is a plus."
+  },
+  "Google": {
+    title: "Google - SWE",
+    required: ["algorithms", "data structures", "system design", "complexity", "python", "c++", "java"],
+    nice: ["distributed systems", "machine learning", "maps", "search", "large-scale"],
+    description: "Focus on algorithms, complexity and system design for large-scale problems."
+  },
+  "Microsoft": {
+    title: "Microsoft - Software Engineer",
+    required: ["c#", ".net", "system design", "algorithms", "data structures", "azure"],
+    nice: ["distributed systems", "microservices", "ci/cd"],
+    description: "Enterprise-grade systems, strong engineering fundamentals and familiarity with Azure."
+  },
+  "Wipro": {
+    title: "Wipro - Software Developer",
+    required: ["java", "spring", "sql", "apis", "rest"],
+    nice: ["cloud", "aws", "devops"],
+    description: "Enterprise projects, focus on Java, Spring, SQL, and integration."
+  },
+  "TCS": {
+    title: "TCS - Software Engineer",
+    required: ["java", "sql", "apis", "communication", "teamwork"],
+    nice: ["spring", "microservices", "cloud"],
+    description: "Large IT services company: Java, SQL and client communication are valuable."
+  }
+};
+
+/* UI population */
+const companiesListEl = document.getElementById('companiesList');
+Object.keys(COMPANY_JDS).forEach((name, i) => {
+  const div = document.createElement('label');
+  div.className = 'company';
+  div.innerHTML = `<input type="checkbox" value="${name}" ${i===0 ? 'checked' : ''}/> <div><strong>${name}</strong><div style="font-size:0.82rem;color:var(--muted)">${COMPANY_JDS[name].title}</div></div>`;
+  companiesListEl.appendChild(div);
+});
+
+/* File reading: PDF (pdf.js) and txt */
+const fileInput = document.getElementById('fileInput');
+const resumeTextArea = document.getElementById('resumeText');
+const analyzeBtn = document.getElementById('analyzeBtn');
+const clearBtn = document.getElementById('clearBtn');
+const parsedPreview = document.getElementById('parsedPreview');
+const suggestionsEl = document.getElementById('suggestions');
+const skillsCloud = document.getElementById('skillsCloud');
+const missingSkillsBlock = document.getElementById('missingSkillsBlock');
+const overallScoreEl = document.getElementById('overallScore');
+const companyListSmall = document.getElementById('companyListSmall');
+const downloadBtn = document.getElementById('downloadBtn');
+const copyBtn = document.getElementById('copyBtn');
+
+let lastParsedText = '';
+
+fileInput.addEventListener('change', async (ev) => {
+  const f = ev.target.files[0];
+  if(!f) return;
+  const name = f.name.toLowerCase();
+  if(name.endsWith('.pdf')) {
+    const arrayBuffer = await f.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({data:arrayBuffer}).promise;
+    let full = '';
+    for(let p=1;p<=pdf.numPages;p++){
+      const page = await pdf.getPage(p);
+      const txt = await page.getTextContent();
+      const pageText = txt.items.map(it => it.str).join(' ');
+      full += pageText + '\n\n';
+    }
+    resumeTextArea.value = full;
+  } else {
+    // plaintext fallback
+    const text = await f.text();
+    resumeTextArea.value = text;
+  }
+});
+
+/* Simple parsing heuristics */
+function normalize(text) {
+  return text.replace(/\r/g,' ').replace(/\n+/g,' ').replace(/\s+/g,' ').toLowerCase();
+}
+
+function extractSkills(text, candidates) {
+  const found = new Set();
+  const norm = normalize(text);
+  candidates.forEach(k => {
+    // match word boundary or phrase
+    const re = new RegExp('\\b' + k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '\\b','i');
+    if(re.test(norm)) found.add(k);
+  });
+  return Array.from(found);
+}
+
+function estimateExperienceYears(text) {
+  // look for "X years" or ranges and sum approximate durations
+  const norm = normalize(text);
+  const matches = norm.matchAll(/(\d{1,2})\s*(?:\+|\-|\sto\s)?\s*(\d{0,2})?\s*years?/g);
+  let best = 0;
+  for(const m of matches){
+    const a = parseInt(m[1]);
+    const b = m[2] ? parseInt(m[2]) : a;
+    if(!isNaN(a)) best = Math.max(best, (b||a));
+  }
+  // fallback: look for "experience" + digit anywhere
+  if(best===0){
+    const m = norm.match(/(\d)\+?\s*years?\s*experience/);
+    if(m) best = parseInt(m[1]);
+  }
+  return best; // approximate years
+}
+
+function detectEducation(text) {
+  const norm = normalize(text);
+  if(/\b(phd|doctorate)\b/.test(norm)) return "PhD";
+  if(/\b(master|m\.sc|msc|mtech|m\.tech|mba)\b/.test(norm)) return "Master's";
+  if(/\b(bachelor|b\.tech|btech|b\.e|be|bsc)\b/.test(norm)) return "Bachelor's";
+  return "Not detected";
+}
+
+/* Core scoring function: compares resume text to a company JD */
+function scoreForCompany(resumeText, jd) {
+  const textN = normalize(resumeText);
+  const required = jd.required || [];
+  const nice = jd.nice || [];
+
+  // required matches: high weight
+  const reqFound = extractSkills(textN, required);
+  const reqScore = (reqFound.length / Math.max(1, required.length)) * 0.6;
+
+  // nice-to-have matches: medium weight
+  const niceFound = extractSkills(textN, nice);
+  const niceScore = (niceFound.length / Math.max(1, nice.length)) * 0.25;
+
+  // other heuristics: experience years and education
+  const yrs = estimateExperienceYears(resumeText);
+  let expScore = Math.min(1, yrs / 5) * 0.1; // 5+ years gives full small boost
+
+  // detection of keywords from description body
+  const descr = jd.description || '';
+  const descrMatches = extractSkills(textN, descr.split(/\W+/).filter(Boolean));
+  const descrScore = Math.min(1, descrMatches.length / 6) * 0.05;
+
+  const total = (reqScore + niceScore + expScore + descrScore) * 100; // 0-100
+  return {
+    score: Math.round(total),
+    breakdown: { reqFound, reqMissing: required.filter(x=>!reqFound.includes(x)), niceFound, niceMissing: nice.filter(x=>!niceFound.includes(x)), yrs, education: detectEducation(resumeText) }
+  };
+}
+
+/* Rendering & charts */
+let companyChart = null;
+
+function renderResults(resumeText, selectedCompanies) {
+  lastParsedText = resumeText;
+  parsedPreview.textContent = resumeText.slice(0,20000) || '—';
+
+  // compute per-company scores
+  const results = selectedCompanies.map(name => {
+    const jd = COMPANY_JDS[name];
+    return { name, ...scoreForCompany(resumeText, jd) };
+  });
+
+  // overall average
+  const avg = results.length ? Math.round(results.reduce((s,r)=>s+r.score,0)/results.length) : 0;
+  overallScoreEl.textContent = avg ? (avg + '%') : '—';
+
+  // company chart
+  const labels = results.map(r=>r.name);
+  const data = results.map(r=>r.score);
+  const ctx = document.getElementById('companyChart').getContext('2d');
+  if(companyChart) companyChart.destroy();
+  companyChart = new Chart(ctx, {
+    type:'bar',
+    data:{ labels, datasets:[{ label:'Match %', data, borderRadius:6 }]},
+    options:{ responsive:true, scales:{y:{beginAtZero:true, max:100}}, plugins:{legend:{display:false}}}
+  });
+
+  // small list and suggestions building
+  companyListSmall.innerHTML = results.map(r=>`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed rgba(255,255,255,0.02)"><div><strong>${r.name}</strong><div style="font-size:0.85rem;color:var(--muted)">${COMPANY_JDS[r.name].title}</div></div><div style="text-align:right"><div style="font-weight:700">${r.score}%</div><div style="font-size:0.82rem;color:var(--muted)">${r.breakdown.yrs} yrs • ${r.breakdown.education}</div></div></div>`).join('');
+
+  // skills cloud (aggregate top found skills)
+  const allFound = new Map();
+  results.forEach(r=>{
+    r.breakdown.reqFound.forEach(s => allFound.set(s, (allFound.get(s)||0) + 2));
+    r.breakdown.niceFound.forEach(s => allFound.set(s, (allFound.get(s)||0) + 1));
+  });
+  const cloudHtml = Array.from(allFound.entries()).sort((a,b)=>b[1]-a[1]).slice(0,40).map(([s,score]) => `<div class="highlight" style="margin:4px;display:inline-block;font-size:0.9rem">${s}</div>`).join('');
+  skillsCloud.innerHTML = cloudHtml || '<div style="color:var(--muted)">No skills detected yet. Try uploading or pasting a resume with keywords (Java, Python, AWS...)</div>';
+
+  // missing skills aggregated
+  const missing = {};
+  results.forEach(r=>{
+    r.breakdown.reqMissing.forEach(s => missing[s] = (missing[s]||0)+1);
+  });
+  const missingSorted = Object.keys(missing).sort((a,b)=>missing[b]-missing[a]);
+  missingSkillsBlock.innerHTML = missingSorted.length ? `<strong style="color:var(--muted)">Top missing required skills:</strong> ${missingSorted.slice(0,8).map(k=>`<span class="chip" style="margin-left:6px">${k}</span>`).join('')}` : `<div style="color:var(--muted)">No major missing required skills detected across chosen companies.</div>`;
+
+  // suggestions text: per company suggestions and general tips
+  const suggestionParts = [];
+  suggestionParts.push(`<h4>Summary</h4>`);
+  suggestionParts.push(`<p>Average match score: <strong>${avg}%</strong> across ${results.length} selected company(ies).</p>`);
+
+  results.forEach(r=>{
+    suggestionParts.push(`<h4 style="margin-top:8px">${r.name} — ${r.score}%</h4>`);
+    suggestionParts.push(`<ul>`);
+    suggestionParts.push(`<li><strong>Found required:</strong> ${r.breakdown.reqFound.join(', ') || '<span style="color:var(--muted)">none</span>'}</li>`);
+    suggestionParts.push(`<li><strong>Missing required:</strong> ${r.breakdown.reqMissing.join(', ') || '<span style="color:var(--muted)">none</span>'}</li>`);
+    suggestionParts.push(`<li><strong>Found nice-to-have:</strong> ${r.breakdown.niceFound.join(', ') || '<span style="color:var(--muted)">none</span>'}</li>`);
+    suggestionParts.push(`<li><strong>Estimated experience:</strong> ${r.breakdown.yrs} year(s)</li>`);
+    suggestionParts.push(`<li><strong>Education detected:</strong> ${r.breakdown.education}</li>`);
+    suggestionParts.push(`</ul>`);
+  });
+
+  suggestionParts.push(`<h4 style="margin-top:8px">General improvement suggestions</h4>`);
+  suggestionParts.push(`<ol>
+    <li>Include exact required keywords from target job descriptions (e.g. <em>system design</em>, <em>algorithms</em>, <em>java</em>) — recruiters & ATS often keyword-match.</li>
+    <li>Move technical skills to a dedicated "Skills" section with tools & frameworks (e.g. Java, Spring, AWS, Docker).</li>
+    <li>Add quantified achievements (e.g. "Reduced latency by 30%") and mention scale (users, data size).</li>
+    <li>If missing, add small projects or side-experience that show required skills (e.g. a cloud project using AWS).</li>
+    <li>Use consistent date formats and list durations (e.g. "Jun 2020 — Aug 2023 (3 yrs 3 mos)"). This improves experience estimation.</li>
+  </ol>`);
+
+  suggestionsEl.innerHTML = suggestionParts.join('');
+}
+
+/* Buttons behavior */
+analyzeBtn.addEventListener('click', () => {
+  const selected = Array.from(document.querySelectorAll('#companiesList input:checked')).map(i=>i.value);
+  const txt = resumeTextArea.value.trim();
+  if(!txt){ alert('Please paste or upload a resume first.'); return; }
+  renderResults(txt, selected.length ? selected : ['Amazon']);
+});
+
+clearBtn.addEventListener('click', () => {
+  resumeTextArea.value = '';
+  parsedPreview.textContent = '';
+  suggestionsEl.innerHTML = '';
+  skillsCloud.innerHTML = '';
+  missingSkillsBlock.innerHTML = '';
+  overallScoreEl.textContent = '—';
+  if(companyChart) companyChart.destroy();
+  companyListSmall.innerHTML = '';
+});
+
+downloadBtn.addEventListener('click', () => {
+  const blob = new Blob([ suggestionsEl.innerText || 'No suggestions yet' ], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'resume-suggestions.txt';
+  a.click();
+});
+
+copyBtn.addEventListener('click', async () => {
+  const txt = suggestionsEl.innerText || 'No suggestions yet';
+  try {
+    await navigator.clipboard.writeText(txt);
+    alert('Suggestions copied to clipboard');
+  } catch(e){
+    alert('Could not copy automatically — please select and copy manually.');
+  }
+});
+
+/* Keyboard shortcut: Ctrl+Enter -> analyze */
+document.addEventListener('keydown', (e)=>{
+  if(e.ctrlKey && e.key === 'Enter') analyzeBtn.click();
+});
+
+/* Pre-fill with a short sample for demo */
+resumeTextArea.value = `Chandushree N
+Software engineer experienced in Java, Spring Boot, REST APIs, SQL, AWS (EC2, S3), Docker.
+Experience: 3 years
+Worked on microservices and performance tuning. Implemented CI/CD using GitHub Actions.
+Education: B.Tech in Computer Science
+Projects: Scalable order processing system using AWS lambda and SQS.`;
+
+</script>
+</body>
+</html>
